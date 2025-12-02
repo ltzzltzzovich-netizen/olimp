@@ -1,0 +1,4 @@
+# Telegram Configuration - EXAMPLE
+# Copy this file to config.py and add your real tokens
+TELEGRAM_BOT_TOKEN = 'your_bot_token_here'
+TELEGRAM_CHAT_ID = 'your_chat_id_here'

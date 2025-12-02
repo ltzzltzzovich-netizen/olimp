@@ -1,0 +1,6 @@
+flask
+flask-cors
+flask-sqlalchemy
+python-telegram-bot
+requests
+gunicorn
