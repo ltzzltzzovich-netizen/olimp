@@ -152,4 +152,4 @@ TELEGRAM_CHAT_ID = 'your_chat_id'
 
 ## 👨‍💻 Автор
 
-yarbin
+ltzyarbin
