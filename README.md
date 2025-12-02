@@ -128,25 +128,6 @@ static const String baseUrl = 'http://YOUR_IP:8000';
 flutter run
 ```
 
-## ☁️ Деплой на Render.com
-
-1. Залей проект на GitHub
-2. Зарегистрируйся на [Render.com](https://render.com)
-3. Создай новый **Web Service**
-4. Укажи настройки:
-   - **Root Directory:** `backend`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn main:app`
-5. После деплоя обнови `baseUrl` в Flutter на полученный URL
-
-## 🔐 Тестовые пользователи
-
-| Логин  | Пароль   | Роль      |
-| ------ | -------- | --------- |
-| worker | password | Рабочий   |
-| master | master   | Мастер    |
-| admin  | admin    | Диспетчер |
-
 ## 📡 API Endpoints
 
 ### Аутентификация
@@ -209,5 +190,4 @@ TELEGRAM_CHAT_ID = 'your_chat_id'
 
 ## 👨‍💻 Автор
 
-Ярбин  
-Научный руководитель: Галимова Л.Г.
+yarbin
