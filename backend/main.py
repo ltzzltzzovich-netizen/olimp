@@ -412,15 +412,12 @@ def telegram_webhook():
         asyncio.run(telegram_app.process_update(update))
     return 'OK'
 
-@app.before_request
-def setup_telegram():
-    """Initialize Telegram app before first request"""
-    global telegram_app
-    if telegram_app is None:
-        asyncio.run(initialize_telegram_app())
-
 if __name__ == '__main__':
-    # Set webhook on startup (do this once, then Flask will handle updates)
+    # Initialize Telegram bot BEFORE starting Flask
+    print("⏳ Initializing Telegram bot...")
+    asyncio.run(initialize_telegram_app())
+    
+    # Set webhook on startup
     webhook_url = os.getenv('WEBHOOK_URL', 'https://qualitycontrol-api.onrender.com/telegram-webhook')
     
     if TELEGRAM_BOT_TOKEN:
@@ -433,4 +430,5 @@ if __name__ == '__main__':
         )
         print(f"📡 Webhook set: {response.json()}")
     
+    # Start Flask server
     app.run(host='0.0.0.0', port=8000, debug=False)
