@@ -409,7 +409,24 @@ def telegram_webhook():
     """Handle incoming Telegram updates via webhook"""
     if telegram_app:
         update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        asyncio.run(telegram_app.process_update(update))
+        # Use existing event loop instead of creating new one with asyncio.run()
+        import asyncio
+        import threading
+        
+        # Get or create event loop for this thread
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Process update in the loop
+        if loop.is_running():
+            # If loop is already running, schedule the coroutine
+            asyncio.ensure_future(telegram_app.process_update(update))
+        else:
+            # Otherwise run it directly
+            loop.run_until_complete(telegram_app.process_update(update))
     return 'OK'
 
 if __name__ == '__main__':
