@@ -242,15 +242,22 @@ def update_request_status(req_id):
     return jsonify({"message": "Status updated", "request": req.to_dict()})
 
 
-# Telegram Bot Integration
-def start_telegram_bot():
-    """Start Telegram bot in a separate process."""
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import ApplicationBuilder, ContextTypes, CallbackQueryHandler
-    import psycopg2
-    import os
+# Telegram Bot Webhook Integration
+from telegram import Update
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+import asyncio
 
-    # DB Config for Bot (same as Flask)
+# Initialize Telegram Application globally
+telegram_app = None
+
+async def initialize_telegram_app():
+    """Initialize Telegram application with handlers"""
+    global telegram_app
+    
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    import psycopg2
+    
+    # DB Config for Bot
     DB_DSN = os.getenv(
         'DATABASE_URL', 
         'postgresql://postgres:postgres@localhost:5432/quality_control'
@@ -296,7 +303,6 @@ def start_telegram_bot():
         data = query.data.split(":")
         action = data[0]
         
-        # Helper to edit message or caption depending on message type (остается прежним)
         async def edit_message(text, reply_markup=None):
             if query.message.photo:
                 await query.edit_message_caption(
@@ -316,20 +322,15 @@ def start_telegram_bot():
                 new_status = data[1]
                 req_id = data[2]
                 
-                # При смене статуса на Denied
                 update_status_db(req_id, new_status)
-                
-                # Используем новый перевод
                 translated_status = STATUS_TRANSLATIONS.get(new_status, new_status)
                 
                 original_text = query.message.caption if query.message.photo else query.message.text
                 base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
                 
-                # При "Отклонить" сообщение завершается, убираем кнопки.
                 await edit_message(f"{base_text}\n\n❌ Статус обновлен: *{translated_status}*")
                 
             elif action == "assign_menu":
-                # Show available masters selection menu
                 req_id = data[1]
                 masters = get_masters()
                 
@@ -340,13 +341,11 @@ def start_telegram_bot():
                     await edit_message(f"{base_text}\n\n⚠️ Нет доступных мастеров для назначения.")
                     return
 
-                # Filter only available masters (no active tasks)
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 
                 keyboard = []
                 for m_id, m_name in masters:
-                    # Check if master has active tasks
                     cursor.execute(
                         "SELECT COUNT(*) FROM requests WHERE technician_id = %s AND status = 'In Progress'",
                         (m_id,)
@@ -354,10 +353,8 @@ def start_telegram_bot():
                     active_count = cursor.fetchone()[0]
                     
                     if active_count == 0:
-                        # Master is free
                         keyboard.append([InlineKeyboardButton(f"✅ {m_name} (Свободен)", callback_data=f"assign:{m_id}:{req_id}")])
                     else:
-                        # Master is busy - show but disabled
                         keyboard.append([InlineKeyboardButton(f"⏳ {m_name} (Занят - {active_count})", callback_data=f"busy:{m_id}")])
                 
                 conn.close()
@@ -371,10 +368,8 @@ def start_telegram_bot():
                 await edit_message(f"{base_text}\n\n👷 **Выберите свободного мастера:**",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
-
                 
             elif action == "assign":
-                # Assign master to request
                 master_id = data[1]
                 req_id = data[2]
                 
@@ -399,23 +394,43 @@ def start_telegram_bot():
                 )
                 
             elif action == "busy":
-                # Handler for clicking on busy master - just show alert
                 await query.answer("⚠️ Этот мастер сейчас занят", show_alert=True)
         except Exception as e:
             print(f"Error in button_handler: {e}")
     
-    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    print("🤖 Telegram Bot started and listening for updates...")
-    application.run_polling()
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app.add_handler(CallbackQueryHandler(button_handler))
+    await telegram_app.initialize()
+    await telegram_app.start()
+    print("🤖 Telegram Bot initialized for webhook mode")
+
+@app.route('/telegram-webhook', methods=['POST'])
+def telegram_webhook():
+    """Handle incoming Telegram updates via webhook"""
+    if telegram_app:
+        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+        asyncio.run(telegram_app.process_update(update))
+    return 'OK'
+
+@app.before_request
+def setup_telegram():
+    """Initialize Telegram app before first request"""
+    global telegram_app
+    if telegram_app is None:
+        asyncio.run(initialize_telegram_app())
 
 if __name__ == '__main__':
-    import threading
+    # Set webhook on startup (do this once, then Flask will handle updates)
+    webhook_url = os.getenv('WEBHOOK_URL', 'https://qualitycontrol-api.onrender.com/telegram-webhook')
     
-    # Start Telegram bot in a separate thread
-    bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
-    bot_thread.start()
+    if TELEGRAM_BOT_TOKEN:
+        # Delete any existing webhook first
+        http_requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook')
+        # Set new webhook
+        response = http_requests.post(
+            f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook',
+            json={'url': webhook_url}
+        )
+        print(f"📡 Webhook set: {response.json()}")
     
-    # Start Flask server
     app.run(host='0.0.0.0', port=8000, debug=False)
