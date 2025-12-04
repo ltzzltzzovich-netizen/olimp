@@ -243,210 +243,209 @@ def update_request_status(req_id):
 
 
 # Telegram Bot Webhook Integration
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 import asyncio
+import threading
+import time
+import psycopg2
 
-# Initialize Telegram Application globally
+# Global variables
+background_loop = None
 telegram_app = None
 
-async def initialize_telegram_app():
-    """Initialize Telegram application with handlers"""
-    global telegram_app
+# --- Database Helpers for Bot ---
+def get_db_connection():
+    DB_DSN = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/quality_control')
+    return psycopg2.connect(DB_DSN)
+
+def get_masters():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, full_name FROM users WHERE role = 'master'")
+    masters = cursor.fetchall()
+    conn.close()
+    return masters
+
+def update_status_db(req_id, new_status):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE requests SET status = %s WHERE id = %s", (new_status, req_id))
+    conn.commit()
+    conn.close()
+
+def assign_master_db(req_id, master_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE requests SET technician_id = %s, status = 'Assigned' WHERE id = %s", (master_id, req_id))
+    conn.commit()
+    conn.close()
     
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    import psycopg2
+def get_master_name(master_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT full_name FROM users WHERE id = %s", (master_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else "Unknown"
+
+# --- Bot Handlers ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     
-    # DB Config for Bot
-    DB_DSN = os.getenv(
-        'DATABASE_URL', 
-        'postgresql://postgres:postgres@localhost:5432/quality_control'
-    )
-
-    def get_db_connection():
-        return psycopg2.connect(DB_DSN)
-
-    def get_masters():
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, full_name FROM users WHERE role = 'master'")
-        masters = cursor.fetchall()
-        conn.close()
-        return masters
-
-    def update_status_db(req_id, new_status):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE requests SET status = %s WHERE id = %s", (new_status, req_id))
-        conn.commit()
-        conn.close()
-
-    def assign_master_db(req_id, master_id):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE requests SET technician_id = %s, status = 'Assigned' WHERE id = %s", (master_id, req_id))
-        conn.commit()
-        conn.close()
-        
-    def get_master_name(master_id):
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT full_name FROM users WHERE id = %s", (master_id,))
-        result = cursor.fetchone()
-        conn.close()
-        return result[0] if result else "Unknown"
-
-    async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data.split(":")
-        action = data[0]
-        
-        async def edit_message(text, reply_markup=None):
-            if query.message.photo:
-                await query.edit_message_caption(
-                    caption=text,
-                    parse_mode='Markdown',
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text(
-                    text=text,
-                    parse_mode='Markdown',
-                    reply_markup=reply_markup
-                )
-
-        try:
-            if action == "status":
-                new_status = data[1]
-                req_id = data[2]
-                
-                update_status_db(req_id, new_status)
-                translated_status = STATUS_TRANSLATIONS.get(new_status, new_status)
-                
-                original_text = query.message.caption if query.message.photo else query.message.text
-                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
-                
-                await edit_message(f"{base_text}\n\n❌ Статус обновлен: *{translated_status}*")
-                
-            elif action == "assign_menu":
-                req_id = data[1]
-                masters = get_masters()
-                
-                original_text = query.message.caption if query.message.photo else query.message.text
-                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
-
-                if not masters:
-                    await edit_message(f"{base_text}\n\n⚠️ Нет доступных мастеров для назначения.")
-                    return
-
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                
-                keyboard = []
-                for m_id, m_name in masters:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM requests WHERE technician_id = %s AND status = 'In Progress'",
-                        (m_id,)
-                    )
-                    active_count = cursor.fetchone()[0]
-                    
-                    if active_count == 0:
-                        keyboard.append([InlineKeyboardButton(f"✅ {m_name} (Свободен)", callback_data=f"assign:{m_id}:{req_id}")])
-                    else:
-                        keyboard.append([InlineKeyboardButton(f"⏳ {m_name} (Занят - {active_count})", callback_data=f"busy:{m_id}")])
-                
-                conn.close()
-                
-                if not any('assign:' in btn[0].callback_data for btn in keyboard):
-                    await edit_message(f"{base_text}\n\n⚠️ Все мастера заняты. Попробуйте позже.")
-                    return
-                
-                keyboard.append([InlineKeyboardButton("🔙 Отмена", callback_data=f"cancel_assign:{req_id}")])
-                
-                await edit_message(f"{base_text}\n\n👷 **Выберите свободного мастера:**",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                
-            elif action == "assign":
-                master_id = data[1]
-                req_id = data[2]
-                
-                assign_master_db(req_id, master_id)
-                master_name = get_master_name(master_id)
-                
-                original_text = query.message.caption if query.message.photo else query.message.text
-                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
-                
-                assigned_status_ru = STATUS_TRANSLATIONS.get('Assigned')
-
-                await edit_message(f"{base_text}\n\n✅ Мастер назначен: *{master_name}* ({assigned_status_ru})")
-                
-            elif action == "cancel_assign":
-                req_id = data[1]
-                keyboard = [
-                    [InlineKeyboardButton('✅ В работу', callback_data=f'assign_menu:{req_id}')],
-                    [InlineKeyboardButton('❌ Отклонена', callback_data=f'status:Denied:{req_id}')],
-                ]
-                await query.edit_message_reply_markup(
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                
-            elif action == "busy":
-                await query.answer("⚠️ Этот мастер сейчас занят", show_alert=True)
-        except Exception as e:
-            print(f"Error in button_handler: {e}")
+    data = query.data.split(":")
+    action = data[0]
     
+    async def edit_message(text, reply_markup=None):
+        if query.message.photo:
+            await query.edit_message_caption(
+                caption=text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text(
+                text=text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+
+    try:
+        if action == "status":
+            new_status = data[1]
+            req_id = data[2]
+            
+            update_status_db(req_id, new_status)
+            translated_status = STATUS_TRANSLATIONS.get(new_status, new_status)
+            
+            original_text = query.message.caption if query.message.photo else query.message.text
+            # Keep only the description part
+            base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0].split('\n\n❌')[0]
+            
+            await edit_message(f"{base_text}\n\n❌ Статус обновлен: *{translated_status}*")
+            
+        elif action == "assign_menu":
+            req_id = data[1]
+            masters = get_masters()
+            
+            original_text = query.message.caption if query.message.photo else query.message.text
+            base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0].split('\n\n❌')[0]
+
+            if not masters:
+                await edit_message(f"{base_text}\n\n⚠️ Нет доступных мастеров для назначения.")
+                return
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            keyboard = []
+            for m_id, m_name in masters:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM requests WHERE technician_id = %s AND status = 'In Progress'",
+                    (m_id,)
+                )
+                active_count = cursor.fetchone()[0]
+                
+                if active_count == 0:
+                    keyboard.append([InlineKeyboardButton(f"✅ {m_name} (Свободен)", callback_data=f"assign:{m_id}:{req_id}")])
+                else:
+                    keyboard.append([InlineKeyboardButton(f"⏳ {m_name} (Занят - {active_count})", callback_data=f"busy:{m_id}")])
+            
+            conn.close()
+            
+            if not any('assign:' in btn[0].callback_data for btn in keyboard):
+                await edit_message(f"{base_text}\n\n⚠️ Все мастера заняты. Попробуйте позже.")
+                return
+            
+            keyboard.append([InlineKeyboardButton("🔙 Отмена", callback_data=f"cancel_assign:{req_id}")])
+            
+            await edit_message(f"{base_text}\n\n👷 **Выберите свободного мастера:**",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+        elif action == "assign":
+            master_id = data[1]
+            req_id = data[2]
+            
+            assign_master_db(req_id, master_id)
+            master_name = get_master_name(master_id)
+            
+            original_text = query.message.caption if query.message.photo else query.message.text
+            base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0].split('\n\n❌')[0]
+            
+            assigned_status_ru = STATUS_TRANSLATIONS.get('Assigned')
+
+            await edit_message(f"{base_text}\n\n✅ Мастер назначен: *{master_name}* ({assigned_status_ru})")
+            
+        elif action == "cancel_assign":
+            req_id = data[1]
+            keyboard = [
+                [InlineKeyboardButton('✅ В работу', callback_data=f'assign_menu:{req_id}')],
+                [InlineKeyboardButton('❌ Отклонена', callback_data=f'status:Denied:{req_id}')],
+            ]
+            await query.edit_message_reply_markup(
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+        elif action == "busy":
+            await query.answer("⚠️ Этот мастер сейчас занят", show_alert=True)
+    except Exception as e:
+        print(f"Error in button_handler: {e}")
+
+def start_background_bot_loop():
+    """Runs the Telegram bot in a dedicated background thread with a permanent event loop."""
+    global background_loop, telegram_app
+    
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    background_loop = loop
+    
+    # Initialize the application inside this loop
     telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     telegram_app.add_handler(CallbackQueryHandler(button_handler))
-    await telegram_app.initialize()
-    await telegram_app.start()
-    print("🤖 Telegram Bot initialized for webhook mode")
+    
+    # Initialize and start the bot
+    loop.run_until_complete(telegram_app.initialize())
+    loop.run_until_complete(telegram_app.start())
+    
+    print("🤖 Telegram Bot initialized in background loop")
+    
+    # Run the loop forever to process updates
+    loop.run_forever()
 
 @app.route('/telegram-webhook', methods=['POST'])
 def telegram_webhook():
     """Handle incoming Telegram updates via webhook"""
-    if telegram_app:
+    if telegram_app and background_loop:
+        # Pass the update to the background loop safely
         update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        
-        # Run in separate thread with its own event loop
-        import threading
-        import asyncio
-        
-        def process_in_thread():
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(telegram_app.process_update(update))
-            finally:
-                loop.close()
-        
-        # Start thread and wait for completion
-        thread = threading.Thread(target=process_in_thread)
-        thread.start()
-        thread.join(timeout=10)  # Wait max 10 seconds
-        
+        asyncio.run_coroutine_threadsafe(telegram_app.process_update(update), background_loop)
     return 'OK'
 
 if __name__ == '__main__':
-    # Initialize Telegram bot BEFORE starting Flask
-    print("⏳ Initializing Telegram bot...")
-    asyncio.run(initialize_telegram_app())
+    # Start the bot background thread
+    bot_thread = threading.Thread(target=start_background_bot_loop, daemon=True)
+    bot_thread.start()
+    
+    # Wait a moment for bot to initialize
+    time.sleep(2)
     
     # Set webhook on startup
     webhook_url = os.getenv('WEBHOOK_URL', 'https://qualitycontrol-api.onrender.com/telegram-webhook')
     
     if TELEGRAM_BOT_TOKEN:
-        # Delete any existing webhook first
-        http_requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook')
-        # Set new webhook
-        response = http_requests.post(
-            f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook',
-            json={'url': webhook_url}
-        )
-        print(f"📡 Webhook set: {response.json()}")
+        try:
+            # Delete any existing webhook first
+            http_requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook')
+            # Set new webhook
+            response = http_requests.post(
+                f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook',
+                json={'url': webhook_url}
+            )
+            print(f"📡 Webhook set: {response.json()}")
+        except Exception as e:
+            print(f"⚠️ Failed to set webhook: {e}")
     
-    # Start Flask server
     app.run(host='0.0.0.0', port=8000, debug=False)
