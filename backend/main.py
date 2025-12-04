@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, request, jsonify, send_from_directory, send_file, render_template
 import os
+import requests as http_requests
 import requests as http_requests
 import openpyxl
 from io import BytesIO
@@ -103,6 +104,10 @@ def export_report():
         as_attachment=True,
         download_name='requests_report.xlsx'
     )
+
+@app.route('/admin')
+def admin_dashboard():
+    return render_template('admin.html')
 
 @app.route('/admin/reset_requests', methods=['POST'])
 def reset_requests():

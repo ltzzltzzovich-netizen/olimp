@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quality Control Admin</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      h1 {
+        color: #333;
+      }
+      .card {
+        border: 1px solid #ddd;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      button {
+        padding: 10px 20px;
+        cursor: pointer;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+      }
+      .btn-danger {
+        background-color: #dc3545;
+        color: white;
+      }
+      .btn-primary {
+        background-color: #007bff;
+        color: white;
+      }
+      .btn-success {
+        background-color: #28a745;
+        color: white;
+      }
+      #status {
+        margin-top: 20px;
+        padding: 10px;
+        display: none;
+        border-radius: 4px;
+      }
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🔧 Панель Администратора</h1>
+
+    <div class="card">
+      <h2>📊 Отчеты</h2>
+      <p>Скачать полный отчет по всем заявкам в формате Excel.</p>
+      <button
+        class="btn-success"
+        onclick="window.location.href='/reports/export'"
+      >
+        📥 Скачать Excel Отчет
+      </button>
+    </div>
+
+    <div class="card">
+      <h2>🌱 Наполнение Базы (Seeding)</h2>
+      <p>
+        Добавить тестовых пользователей и оборудование. Безопасно запускать
+        многократно (дубликаты не создаются).
+      </p>
+      <button class="btn-primary" onclick="runAction('/admin/seed')">
+        🚀 Наполнить Базу
+      </button>
+    </div>
+
+    <div class="card" style="border-color: #dc3545">
+      <h2 style="color: #dc3545">⚠️ Опасная Зона</h2>
+      <p>
+        Удалить ВСЕ заявки из базы данных. Пользователи и оборудование
+        останутся.
+      </p>
+      <button
+        class="btn-danger"
+        onclick="if(confirm('Вы уверены? Это удалит ВСЕ заявки!')) runAction('/admin/reset_requests')"
+      >
+        🗑️ Удалить ВСЕ заявки
+      </button>
+    </div>
+
+    <div id="status"></div>
+
+    <script>
+      async function runAction(url) {
+        const statusDiv = document.getElementById("status");
+        statusDiv.style.display = "block";
+        statusDiv.className = "";
+        statusDiv.textContent = "Выполняется...";
+
+        try {
+          const response = await fetch(url, { method: "POST" });
+          const data = await response.json();
+
+          if (response.ok) {
+            statusDiv.className = "success";
+            statusDiv.textContent = "✅ Успешно: " + (data.message || "Готово");
+          } else {
+            statusDiv.className = "error";
+            statusDiv.textContent =
+              "❌ Ошибка: " + (data.error || "Неизвестная ошибка");
+          }
+        } catch (e) {
+          statusDiv.className = "error";
+          statusDiv.textContent = "❌ Ошибка сети: " + e.message;
+        }
+      }
+    </script>
+  </body>
+</html>
