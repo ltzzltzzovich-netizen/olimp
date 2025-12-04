@@ -411,15 +411,11 @@ def start_telegram_bot():
     application.run_polling()
 
 if __name__ == '__main__':
-    from multiprocessing import Process
+    import threading
     
-    # Start Telegram bot
-    bot_process = Process(target=start_telegram_bot)
-    bot_process.start()
+    # Start Telegram bot in a separate thread
+    bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
+    bot_thread.start()
     
     # Start Flask server
-    try:
-        app.run(host='0.0.0.0', port=8000, debug=False)
-    finally:
-        bot_process.terminate()
-        bot_process.join()
+    app.run(host='0.0.0.0', port=8000, debug=False)
