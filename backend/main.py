@@ -1,6 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, send_file
 import os
 import requests as http_requests
+import openpyxl
+from io import BytesIO
 from flask_cors import CORS
 from models import db, User, Request, STATUS_TRANSLATIONS
 from sqlalchemy.exc import IntegrityError
@@ -68,6 +70,107 @@ def send_telegram_notification(req_id, description, photo_path=None):
             http_requests.post(url, data=data)
     except Exception as e:
         print(f"Failed to send Telegram notification: {e}")
+
+@app.route('/reports/export', methods=['GET'])
+def export_report():
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Requests Report"
+    
+    # Headers
+    headers = ['ID', 'Date', 'Author', 'Description', 'Master', 'Status', 'Equipment ID']
+    ws.append(headers)
+    
+    requests = Request.query.all()
+    for req in requests:
+        ws.append([
+            req.id,
+            req.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            req.author.full_name if req.author else 'Unknown',
+            req.description,
+            req.technician.full_name if req.technician else '-',
+            STATUS_TRANSLATIONS.get(req.status, req.status),
+            req.device_id if req.device_id else '-'
+        ])
+        
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name='requests_report.xlsx'
+    )
+
+@app.route('/admin/reset_requests', methods=['POST'])
+def reset_requests():
+    try:
+        num_deleted = db.session.query(Request).delete()
+        db.session.commit()
+        return jsonify({"message": f"Deleted {num_deleted} requests"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/seed', methods=['POST'])
+def seed_db():
+    try:
+        # Create tables if not exist (including new Equipment table)
+        db.create_all()
+        
+        # Add sample users if they don't exist
+        users_data = [
+            {"username": "worker2", "full_name": "Алексей Петров", "role": "worker", "password": "password"},
+            {"username": "worker3", "full_name": "Дмитрий Сидоров", "role": "worker", "password": "password"},
+            {"username": "master2", "full_name": "Сергей Мастеров", "role": "master", "password": "master"},
+            {"username": "master3", "full_name": "Андрей Главный", "role": "master", "password": "master"},
+        ]
+        
+        added_users = 0
+        for u_data in users_data:
+            if not User.query.filter_by(username=u_data['username']).first():
+                new_user = User(
+                    username=u_data['username'],
+                    full_name=u_data['full_name'],
+                    role=u_data['role'],
+                    password_hash=u_data['password'] # In real app, hash this!
+                )
+                db.session.add(new_user)
+                added_users += 1
+        
+        # Add sample equipment
+        from models import Equipment
+        equipment_data = [
+            {"name": "Токарный станок CNC-1", "code": "CNC-001", "shop_id": 1},
+            {"name": "Фрезерный станок MIL-2", "code": "MIL-002", "shop_id": 1},
+            {"name": "Пресс гидравлический P-50", "code": "PRS-050", "shop_id": 2},
+            {"name": "Сварочный робот KUKA", "code": "RBT-001", "shop_id": 3},
+        ]
+        
+        added_equipment = 0
+        for eq_data in equipment_data:
+            if not Equipment.query.filter_by(code=eq_data['code']).first():
+                new_eq = Equipment(
+                    name=eq_data['name'],
+                    code=eq_data['code'],
+                    shop_id=eq_data['shop_id']
+                )
+                db.session.add(new_eq)
+                added_equipment += 1
+                
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Database seeded successfully",
+            "users_added": added_users,
+            "equipment_added": added_equipment
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 # ... (DB init code remains same) ...
 
@@ -244,7 +347,71 @@ def update_request_status(req_id):
 
 # Telegram Bot Webhook Integration
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes, CommandHandler
+
+# ... (Previous code)
+
+async def report_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # Generate report
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Requests Report"
+    headers = ['ID', 'Date', 'Author', 'Description', 'Master', 'Status', 'Equipment ID']
+    ws.append(headers)
+    
+    # Fetch data using psycopg2 directly
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT r.id, r.created_at, u.full_name, r.description, t.full_name, r.status, r.device_id 
+        FROM requests r
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN users t ON r.technician_id = t.id
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    for row in rows:
+        # Translate status
+        status = STATUS_TRANSLATIONS.get(row[5], row[5])
+        ws.append([
+            row[0],
+            row[1].strftime('%Y-%m-%d %H:%M:%S') if row[1] else '',
+            row[2] or 'Unknown',
+            row[3],
+            row[4] or '-',
+            status,
+            row[6] or '-'
+        ])
+        
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    await context.bot.send_document(
+        chat_id=chat_id,
+        document=output,
+        filename='requests_report.xlsx',
+        caption='📊 Отчет по заявкам'
+    )
+
+# ... (Existing button_handler)
+
+def start_background_bot_loop():
+    """Runs the Telegram bot in a dedicated background thread with a permanent event loop."""
+    global background_loop, telegram_app
+    
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    background_loop = loop
+    
+    # Initialize the application inside this loop
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app.add_handler(CallbackQueryHandler(button_handler))
+    telegram_app.add_handler(CommandHandler("report", report_command_handler))
 import asyncio
 import threading
 import time

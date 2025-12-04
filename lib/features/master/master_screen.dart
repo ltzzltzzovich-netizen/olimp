@@ -97,11 +97,10 @@ class _MasterScreenState extends State<MasterScreen> {
             icon: const Icon(Icons.exit_to_app),
             onPressed: () async {
               await _apiService.logout();
-              if (mounted) {
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                );
-              }
+              if (!context.mounted) return;
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+              );
             },
             tooltip: 'Выйти',
           ),

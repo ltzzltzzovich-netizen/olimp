@@ -61,3 +61,18 @@ class Request(db.Model):
             "technician_name": self.technician.full_name if self.technician else None,
             "author_name": self.author.full_name if self.author else None
         }
+
+class Equipment(db.Model):
+    __tablename__ = 'equipment'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    code = db.Column(db.String(50), unique=True, nullable=False)
+    shop_id = db.Column(db.Integer, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "code": self.code,
+            "shop_id": self.shop_id
+        }
