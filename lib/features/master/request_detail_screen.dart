@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/services/api_service.dart';
+import '../../core/widgets/video_player_widget.dart';
 
 class RequestDetailScreen extends StatefulWidget {
   final dynamic request;
@@ -14,6 +15,11 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
   final _apiService = ApiService();
   late dynamic _request;
   bool _isUpdating = false;
+
+  bool _isVideo(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(ext);
+  }
 
   @override
   void initState() {
@@ -87,13 +93,14 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _getStatusColor(_request['status']);
-    final statusText = _translateStatus(_request['status']);
-    final photoPath = _request['photo_path'];
+    final status = widget.request['status'];
+    final statusColor = _getStatusColor(status);
+    final statusText = _translateStatus(status);
+    final photoPath = widget.request['photo_path'];
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Заявка #${_request['id']}'),
+        title: const Text('Детали заявки'),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -109,22 +116,58 @@ class _RequestDetailScreenState extends State<RequestDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (photoPath != null)
-              Container(
-                height: 250,
-                width: double.infinity,
-                decoration: BoxDecoration(color: Colors.grey[200]),
-                child: Image.network(
-                  '${ApiService.baseUrl}/$photoPath',
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => const Center(
-                    child: Icon(
-                      Icons.broken_image,
-                      size: 50,
-                      color: Colors.grey,
+              _isVideo(photoPath)
+                  ? Container(
+                      height: 250,
+                      width: double.infinity,
+                      color: Colors.black,
+                      child: VideoPlayerWidget(
+                        videoUrl: '${ApiService.baseUrl}/$photoPath',
+                      ),
+                    )
+                  : Container(
+                      height: 250,
+                      width: double.infinity,
+                      decoration: BoxDecoration(color: Colors.grey[200]),
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => Scaffold(
+                                appBar: AppBar(
+                                  backgroundColor: Colors.black,
+                                  iconTheme: const IconThemeData(
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                backgroundColor: Colors.black,
+                                body: Center(
+                                  child: InteractiveViewer(
+                                    child: Image.network(
+                                      '${ApiService.baseUrl}/$photoPath',
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        child: Image.network(
+                          '${ApiService.baseUrl}/$photoPath',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Center(
+                                child: Icon(
+                                  Icons.broken_image,
+                                  size: 50,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
 
             Padding(
               padding: const EdgeInsets.all(20),

@@ -65,7 +65,11 @@ class ApiService {
     }
   }
 
-  Future<bool> createRequest(String description, XFile? photo) async {
+  Future<bool> createRequest(
+    String description,
+    XFile? photo, {
+    XFile? video,
+  }) async {
     try {
       final userId = await _storage.read(key: 'user_id');
 
@@ -79,6 +83,12 @@ class ApiService {
         formDataMap['photo'] = MultipartFile.fromBytes(
           bytes,
           filename: photo.name,
+        );
+      } else if (video != null) {
+        final bytes = await video.readAsBytes();
+        formDataMap['photo'] = MultipartFile.fromBytes(
+          bytes,
+          filename: video.name,
         );
       }
 
@@ -133,5 +143,11 @@ class ApiService {
       debugPrint('Error fetching request by ID: $e');
       return null;
     }
+  }
+
+  Future<void> logout() async {
+    await _storage.delete(key: 'token');
+    await _storage.delete(key: 'role');
+    await _storage.delete(key: 'user_id');
   }
 }

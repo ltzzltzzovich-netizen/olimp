@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/services/api_service.dart';
+import '../auth/login_screen.dart';
 import 'request_detail_screen.dart';
 
 class MasterScreen extends StatefulWidget {
@@ -93,9 +94,16 @@ class _MasterScreenState extends State<MasterScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadRequests,
-            tooltip: 'Обновить',
+            icon: const Icon(Icons.exit_to_app),
+            onPressed: () async {
+              await _apiService.logout();
+              if (mounted) {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                );
+              }
+            },
+            tooltip: 'Выйти',
           ),
         ],
       ),
@@ -205,36 +213,10 @@ class _MasterScreenState extends State<MasterScreen> {
                         ],
                       ),
                     ),
-                    Text(
-                      '#${req['id']}',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[700],
-                      ),
-                    ),
+                    // Removed ID display
                   ],
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.person_outline,
-                      size: 18,
-                      color: Colors.grey[600],
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      authorName,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
                 Text(
                   req['description'] ?? '',
                   maxLines: 2,
@@ -244,6 +226,25 @@ class _MasterScreenState extends State<MasterScreen> {
                     color: Colors.black87,
                     height: 1.4,
                   ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Icon(Icons.person, size: 18, color: Colors.grey[600]),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Автор: ',
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    ),
+                    Text(
+                      authorName,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 Row(

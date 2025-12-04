@@ -100,7 +100,11 @@ class _ReportScreenState extends State<ReportScreen> {
     final fullDescription = 'ID: $equipmentId\n$description';
 
     try {
-      final success = await ApiService().createRequest(fullDescription, _image);
+      final success = await ApiService().createRequest(
+        fullDescription,
+        _image,
+        video: _video,
+      );
 
       if (success) {
         if (mounted) {

@@ -13,7 +13,9 @@ import 'package:quality_control_app/main.dart';
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const QualityControlApp());
+    await tester.pumpWidget(
+      const QualityControlApp(initialScreen: Scaffold(body: Text('Test'))),
+    );
 
     // Wait for animations and async operations to complete
     await tester.pumpAndSettle();

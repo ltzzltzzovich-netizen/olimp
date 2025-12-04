@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import '../../core/services/api_service.dart';
+import '../../core/widgets/video_player_widget.dart';
 
 class WorkerRequestDetailScreen extends StatelessWidget {
   final dynamic request;
 
   const WorkerRequestDetailScreen({super.key, required this.request});
+
+  bool _isVideo(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(ext);
+  }
 
   Color _getStatusColor(String status) {
     switch (status) {
@@ -30,7 +36,7 @@ class WorkerRequestDetailScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Заявка #${request['id']}'),
+        title: const Text('Детали заявки'),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -46,22 +52,58 @@ class WorkerRequestDetailScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (photoPath != null)
-              Container(
-                height: 250,
-                width: double.infinity,
-                decoration: BoxDecoration(color: Colors.grey[200]),
-                child: Image.network(
-                  '${ApiService.baseUrl}/$photoPath',
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => const Center(
-                    child: Icon(
-                      Icons.broken_image,
-                      size: 50,
-                      color: Colors.grey,
+              _isVideo(photoPath)
+                  ? Container(
+                      height: 250,
+                      width: double.infinity,
+                      color: Colors.black,
+                      child: VideoPlayerWidget(
+                        videoUrl: '${ApiService.baseUrl}/$photoPath',
+                      ),
+                    )
+                  : Container(
+                      height: 250,
+                      width: double.infinity,
+                      decoration: BoxDecoration(color: Colors.grey[200]),
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => Scaffold(
+                                appBar: AppBar(
+                                  backgroundColor: Colors.black,
+                                  iconTheme: const IconThemeData(
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                backgroundColor: Colors.black,
+                                body: Center(
+                                  child: InteractiveViewer(
+                                    child: Image.network(
+                                      '${ApiService.baseUrl}/$photoPath',
+                                      fit: BoxFit.contain,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                        child: Image.network(
+                          '${ApiService.baseUrl}/$photoPath',
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              const Center(
+                                child: Icon(
+                                  Icons.broken_image,
+                                  size: 50,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-              ),
             Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
