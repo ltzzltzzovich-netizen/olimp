@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, send_from_directory
 import os
 import requests as http_requests
 from flask_cors import CORS
-from models import db, User, Request
+from models import db, User, Request, STATUS_TRANSLATIONS
 from sqlalchemy.exc import IntegrityError
 
 # Import Telegram config from separate file (not tracked by git)
@@ -21,7 +21,14 @@ CORS(app)
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///quality_control.db'
+
+# PostgreSQL Config
+# Format: postgresql://user:password@localhost:5432/dbname
+# Try to get from env, else use default local
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    'DATABASE_URL', 
+    'postgresql://postgres:postgres@localhost:5432/quality_control'
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -34,8 +41,7 @@ def send_telegram_notification(req_id, description, photo_path=None):
         # Create inline keyboard with status buttons
         keyboard = {
             'inline_keyboard': [
-                [{'text': '🔄 В работе', 'callback_data': f'status:In Progress:{req_id}'}],
-                [{'text': '✅ Выполнена', 'callback_data': f'status:Processed:{req_id}'}],
+                [{'text': '✅ В работу', 'callback_data': f'assign_menu:{req_id}'}], 
                 [{'text': '❌ Отклонена', 'callback_data': f'status:Denied:{req_id}'}],
             ]
         }
@@ -62,6 +68,8 @@ def send_telegram_notification(req_id, description, photo_path=None):
             http_requests.post(url, data=data)
     except Exception as e:
         print(f"Failed to send Telegram notification: {e}")
+
+# ... (DB init code remains same) ...
 
 # Initialize DB
 with app.app_context():
@@ -198,7 +206,7 @@ def assign_request(req_id):
     
     return jsonify({"message": "Technician assigned", "request": req.to_dict()})
 
-@app.route('/requests/<int:req_id>/status', methods=['POST']) # Using POST for simplicity, or PATCH
+@app.route('/requests/<int:req_id>/status', methods=['POST'])
 def update_request_status(req_id):
     data = request.get_json()
     new_status = data.get('status')
@@ -206,34 +214,80 @@ def update_request_status(req_id):
     req = Request.query.get(req_id)
     if not req:
         return jsonify({"detail": "Request not found"}), 404
-        
+    
+    old_status = req.status    
     req.status = new_status
     db.session.commit()
     
+    # Send notification to dispatcher when work is completed
+    if new_status == 'Completed' and old_status != 'Completed':
+        try:
+            master_name = req.technician.full_name if req.technician else "Неизвестный мастер"
+            message = (
+                f"✅ *ЗАЯВКА #{req_id} ВЫПОЛНЕНА*\n\n"
+                f"👷 *Мастер:* {master_name}\n"
+                f"📝 *Описание:* {req.description}\n\n"
+                f"🎉 Мастер свободен и готов к новым заявкам"
+            )
+            url = f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage'
+            data_payload = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }
+            http_requests.post(url, data=data_payload)
+        except Exception as e:
+            print(f"Failed to send completion notification: {e}")
+    
     return jsonify({"message": "Status updated", "request": req.to_dict()})
+
 
 # Telegram Bot Integration
 def start_telegram_bot():
     """Start Telegram bot in a separate process."""
-    from telegram import Update
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import ApplicationBuilder, ContextTypes, CallbackQueryHandler
-    
-    # We need to create a new app context inside the bot process to use DB
-    # But sharing the same DB file with SQLite is tricky with multiprocessing.
-    # For now, we will use raw sqlite3 in the bot to avoid context issues, 
-    # OR we can just use the API to update status?
-    # Let's stick to raw sqlite3 for the bot for simplicity in this specific process,
-    # as passing the Flask app context to a Process is hard.
-    # Ideally, the bot should call the Flask API, but that requires the API to be up.
-    
-    import sqlite3
-    
-    def update_status_db(req_id, new_status):
-        conn = sqlite3.connect('quality_control.db')
+    import psycopg2
+    import os
+
+    # DB Config for Bot (same as Flask)
+    DB_DSN = os.getenv(
+        'DATABASE_URL', 
+        'postgresql://postgres:postgres@localhost:5432/quality_control'
+    )
+
+    def get_db_connection():
+        return psycopg2.connect(DB_DSN)
+
+    def get_masters():
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE requests SET status = ? WHERE id = ?", (new_status, req_id))
+        cursor.execute("SELECT id, full_name FROM users WHERE role = 'master'")
+        masters = cursor.fetchall()
+        conn.close()
+        return masters
+
+    def update_status_db(req_id, new_status):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE requests SET status = %s WHERE id = %s", (new_status, req_id))
         conn.commit()
         conn.close()
+
+    def assign_master_db(req_id, master_id):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE requests SET technician_id = %s, status = 'Assigned' WHERE id = %s", (master_id, req_id))
+        conn.commit()
+        conn.close()
+        
+    def get_master_name(master_id):
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT full_name FROM users WHERE id = %s", (master_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else "Unknown"
 
     async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -242,23 +296,113 @@ def start_telegram_bot():
         data = query.data.split(":")
         action = data[0]
         
-        if action == "status":
-            new_status = data[1]
-            req_id = data[2]
-            
-            update_status_db(req_id, new_status)
-            
-            status_translations = {
-                'In Progress': 'В работе',
-                'Processed': 'Выполнена',
-                'Denied': 'Отклонена'
-            }
-            translated_status = status_translations.get(new_status, new_status)
-            
-            await query.edit_message_text(
-                text=f"✅ Заявка #{req_id}\nСтатус обновлен: *{translated_status}*",
-                parse_mode='Markdown'
-            )
+        # Helper to edit message or caption depending on message type (остается прежним)
+        async def edit_message(text, reply_markup=None):
+            if query.message.photo:
+                await query.edit_message_caption(
+                    caption=text,
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+            else:
+                await query.edit_message_text(
+                    text=text,
+                    parse_mode='Markdown',
+                    reply_markup=reply_markup
+                )
+
+        try:
+            if action == "status":
+                new_status = data[1]
+                req_id = data[2]
+                
+                # При смене статуса на Denied
+                update_status_db(req_id, new_status)
+                
+                # Используем новый перевод
+                translated_status = STATUS_TRANSLATIONS.get(new_status, new_status)
+                
+                original_text = query.message.caption if query.message.photo else query.message.text
+                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
+                
+                # При "Отклонить" сообщение завершается, убираем кнопки.
+                await edit_message(f"{base_text}\n\n❌ Статус обновлен: *{translated_status}*")
+                
+            elif action == "assign_menu":
+                # Show available masters selection menu
+                req_id = data[1]
+                masters = get_masters()
+                
+                original_text = query.message.caption if query.message.photo else query.message.text
+                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
+
+                if not masters:
+                    await edit_message(f"{base_text}\n\n⚠️ Нет доступных мастеров для назначения.")
+                    return
+
+                # Filter only available masters (no active tasks)
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                keyboard = []
+                for m_id, m_name in masters:
+                    # Check if master has active tasks
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM requests WHERE technician_id = %s AND status = 'In Progress'",
+                        (m_id,)
+                    )
+                    active_count = cursor.fetchone()[0]
+                    
+                    if active_count == 0:
+                        # Master is free
+                        keyboard.append([InlineKeyboardButton(f"✅ {m_name} (Свободен)", callback_data=f"assign:{m_id}:{req_id}")])
+                    else:
+                        # Master is busy - show but disabled
+                        keyboard.append([InlineKeyboardButton(f"⏳ {m_name} (Занят - {active_count})", callback_data=f"busy:{m_id}")])
+                
+                conn.close()
+                
+                if not any('assign:' in btn[0].callback_data for btn in keyboard):
+                    await edit_message(f"{base_text}\n\n⚠️ Все мастера заняты. Попробуйте позже.")
+                    return
+                
+                keyboard.append([InlineKeyboardButton("🔙 Отмена", callback_data=f"cancel_assign:{req_id}")])
+                
+                await edit_message(f"{base_text}\n\n👷 **Выберите свободного мастера:**",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+                
+            elif action == "assign":
+                # Assign master to request
+                master_id = data[1]
+                req_id = data[2]
+                
+                assign_master_db(req_id, master_id)
+                master_name = get_master_name(master_id)
+                
+                original_text = query.message.caption if query.message.photo else query.message.text
+                base_text = original_text.split('\n\n✅')[0].split('\n\n⚠️')[0].split('\n\n👷')[0]
+                
+                assigned_status_ru = STATUS_TRANSLATIONS.get('Assigned')
+
+                await edit_message(f"{base_text}\n\n✅ Мастер назначен: *{master_name}* ({assigned_status_ru})")
+                
+            elif action == "cancel_assign":
+                req_id = data[1]
+                keyboard = [
+                    [InlineKeyboardButton('✅ В работу', callback_data=f'assign_menu:{req_id}')],
+                    [InlineKeyboardButton('❌ Отклонена', callback_data=f'status:Denied:{req_id}')],
+                ]
+                await query.edit_message_reply_markup(
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+            elif action == "busy":
+                # Handler for clicking on busy master - just show alert
+                await query.answer("⚠️ Этот мастер сейчас занят", show_alert=True)
+        except Exception as e:
+            print(f"Error in button_handler: {e}")
     
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CallbackQueryHandler(button_handler))

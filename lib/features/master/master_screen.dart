@@ -1,30 +1,42 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/services/api_service.dart';
-import '../report/report_screen.dart';
-import 'worker_request_detail_screen.dart';
+import 'request_detail_screen.dart';
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class MasterScreen extends StatefulWidget {
+  const MasterScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<MasterScreen> createState() => _MasterScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _MasterScreenState extends State<MasterScreen> {
   final _apiService = ApiService();
   List<dynamic> _requests = [];
   bool _isLoading = true;
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadRequests();
+    // Auto-refresh every 30 seconds
+    _autoRefreshTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _loadRequests(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadRequests() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
-    final requests = await _apiService.getRequests();
+    final requests = await _apiService.getMasterRequests();
     if (mounted) {
       setState(() {
         _requests = requests;
@@ -102,18 +114,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const ReportScreen()),
-          );
-          _loadRequests();
-        },
-        label: const Text('Создать заявку'),
-        icon: const Icon(Icons.add),
-        backgroundColor: const Color(0xFF1565C0),
-      ),
     );
   }
 
@@ -145,22 +145,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildRequestCard(dynamic req) {
     final statusColor = _getStatusColor(req['status'] ?? '');
     final statusIcon = _getStatusIcon(req['status'] ?? '');
-    final masterName = req['technician_name'];
-    final hasDescription =
-        req['description'] != null && req['description'].toString().isNotEmpty;
+    final authorName = req['author_name'] ?? 'Неизвестно';
 
     return Card(
       elevation: 4,
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
-        onTap: () {
-          Navigator.push(
+        onTap: () async {
+          await Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => WorkerRequestDetailScreen(request: req),
+              builder: (context) => RequestDetailScreen(request: req),
             ),
           );
+          _loadRequests();
         },
         borderRadius: BorderRadius.circular(16),
         child: Container(
@@ -217,39 +216,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (hasDescription)
-                  Text(
-                    req['description'] ?? '',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      color: Colors.black87,
-                      height: 1.4,
+                Row(
+                  children: [
+                    Icon(
+                      Icons.person_outline,
+                      size: 18,
+                      color: Colors.grey[600],
                     ),
-                  ),
-                if (hasDescription) const SizedBox(height: 12),
-                if (masterName != null) ...[
-                  Row(
-                    children: [
-                      Icon(Icons.person, size: 18, color: Colors.grey[600]),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Мастер: ',
-                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    const SizedBox(width: 6),
+                    Text(
+                      authorName,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
                       ),
-                      Text(
-                        masterName,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.black87,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  req['description'] ?? '',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Colors.black87,
+                    height: 1.4,
                   ),
-                  const SizedBox(height: 8),
-                ],
+                ),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Icon(

@@ -3,7 +3,16 @@ from datetime import datetime
 
 db = SQLAlchemy()
 
+STATUS_TRANSLATIONS = {
+    'New': 'Новая',
+    'Assigned': 'Назначена',
+    'In Progress': 'В работе',
+    'Completed': 'Выполнена', 
+    'Denied': 'Отклонена'
+}
+
 class User(db.Model):
+    # ... (Остальной код класса User остается прежним) ...
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -31,6 +40,7 @@ class Request(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     description = db.Column(db.Text, nullable=False)
     photo_path = db.Column(db.String(255), nullable=True)
+    # Статус по умолчанию — 'New'
     status = db.Column(db.String(20), default='New') # New, Assigned, In Progress, Completed, Denied
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -44,12 +54,10 @@ class Request(db.Model):
             "id": self.id,
             "description": self.description,
             "photo_path": self.photo_path,
-            "status": self.status,
+            "status": STATUS_TRANSLATIONS.get(self.status, self.status), 
             "created_at": self.created_at.isoformat(),
             "user_id": self.user_id,
             "technician_id": self.technician_id,
             "technician_name": self.technician.full_name if self.technician else None,
             "author_name": self.author.full_name if self.author else None
         }
-
-# Optional: Separate table for Assignments if we want history, but for now simple field is enough
