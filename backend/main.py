@@ -109,6 +109,155 @@ def export_report():
 def admin_dashboard():
     return render_template('admin.html')
 
+# =====================
+# ADMIN CRUD: Users
+# =====================
+@app.route('/admin/users', methods=['GET'])
+def get_users():
+    users = User.query.all()
+    return jsonify([u.to_dict() for u in users])
+
+@app.route('/admin/users', methods=['POST'])
+def create_user():
+    data = request.json
+    try:
+        user = User(
+            username=data['username'],
+            password_hash=data['password'],
+            full_name=data['full_name'],
+            role=data['role']
+        )
+        db.session.add(user)
+        db.session.commit()
+        return jsonify(user.to_dict()), 201
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Username already exists"}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/users/<int:user_id>', methods=['PUT'])
+def update_user(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.json
+    try:
+        if 'full_name' in data:
+            user.full_name = data['full_name']
+        if 'role' in data:
+            user.role = data['role']
+        if 'password' in data and data['password']:
+            user.password_hash = data['password']
+        db.session.commit()
+        return jsonify(user.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/users/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    user = User.query.get_or_404(user_id)
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        return jsonify({"message": "User deleted"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# =====================
+# ADMIN CRUD: Equipment
+# =====================
+from models import Equipment
+
+@app.route('/admin/equipment', methods=['GET'])
+def get_equipment():
+    equipment = Equipment.query.all()
+    return jsonify([e.to_dict() for e in equipment])
+
+@app.route('/admin/equipment', methods=['POST'])
+def create_equipment():
+    data = request.json
+    try:
+        eq = Equipment(
+            name=data['name'],
+            code=data['code'],
+            shop_id=data.get('shop_id')
+        )
+        db.session.add(eq)
+        db.session.commit()
+        return jsonify(eq.to_dict()), 201
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Equipment code already exists"}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/equipment/<int:eq_id>', methods=['PUT'])
+def update_equipment(eq_id):
+    eq = Equipment.query.get_or_404(eq_id)
+    data = request.json
+    try:
+        if 'name' in data:
+            eq.name = data['name']
+        if 'code' in data:
+            eq.code = data['code']
+        if 'shop_id' in data:
+            eq.shop_id = data['shop_id']
+        db.session.commit()
+        return jsonify(eq.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/equipment/<int:eq_id>', methods=['DELETE'])
+def delete_equipment(eq_id):
+    eq = Equipment.query.get_or_404(eq_id)
+    try:
+        db.session.delete(eq)
+        db.session.commit()
+        return jsonify({"message": "Equipment deleted"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# =====================
+# ADMIN: Requests List
+# =====================
+@app.route('/admin/requests', methods=['GET'])
+def get_all_requests():
+    requests_list = Request.query.all()
+    return jsonify([r.to_dict() for r in requests_list])
+
+@app.route('/admin/requests/<int:req_id>', methods=['PUT'])
+def update_request(req_id):
+    req = Request.query.get_or_404(req_id)
+    data = request.json
+    try:
+        if 'status' in data:
+            req.status = data['status']
+        if 'description' in data:
+            req.description = data['description']
+        if 'technician_id' in data:
+            req.technician_id = data['technician_id'] if data['technician_id'] else None
+        db.session.commit()
+        return jsonify(req.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/requests/<int:req_id>', methods=['DELETE'])
+def delete_request(req_id):
+    req = Request.query.get_or_404(req_id)
+    try:
+        db.session.delete(req)
+        db.session.commit()
+        return jsonify({"message": "Request deleted"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/admin/reset_requests', methods=['POST'])
 def reset_requests():
     try:
